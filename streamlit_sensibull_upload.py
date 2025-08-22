@@ -1,23 +1,27 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 
-st.set_page_config(page_title="Sensibull Options Strategy Screener", layout="wide")
-st.title("Sensibull Options Strategy Screener")
-st.markdown("by **Ketan**")
+st.set_page_config(page_title="Sensibull Options Strategy Screener by Ketan", layout="wide")
+
+st.title("Option Strategy Screener")
 st.markdown("[Sensibull Options Screener](https://web.sensibull.com/options-screener?view=table)")
+st.markdown("by **Ketan**", unsafe_allow_html=True)
 
-uploaded_file = st.file_uploader("Upload Sensibull CSV", type="csv")
+uploaded_file = st.file_uploader("Upload Sensibull CSV", type=["csv"])
+
 if uploaded_file is not None:
     try:
+        # Read CSV
         df = pd.read_csv(uploaded_file)
 
         # Ensure numeric columns
-        numeric_cols = ["FuturePrice","FuturePercentChange","ATMIV","ATMIVChange","IVPercentile",
-                        "VolumeMultiple","FutureOIPercentChange","PCR","MaxPain"]
-        for col in numeric_cols:
+        num_cols = ['FuturePrice','FuturePercentChange','ATMIV','ATMIVChange','IVPercentile',
+                    'FutureOIPercentChange','PCR','MaxPain']
+        for col in num_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        # Strategy logic
+        # Define strategy logic
         strategies = []
         entries = []
         exits = []
@@ -26,39 +30,46 @@ if uploaded_file is not None:
         trade_details = []
 
         for idx, row in df.iterrows():
-            fut_price = row['FuturePrice']
-            max_pain = row['MaxPain']
+            fut = row['FuturePrice']
             pcr = row['PCR']
+            maxpain = row['MaxPain']
+            atmiv = row['ATMIV']
 
-            # Default
-            strategy = "No Trade"
-            entry = fut_price
-            exit_price = fut_price
-            comment = ""
-            potential = 0
-            trade_detail = ""
+            strategy = "-"
+            entry = "-"
+            exit_price = "-"
+            comment = "-"
+            points = 0.0
+            trade_detail = "-"
 
-            # Example logic
-            if fut_price < max_pain and pcr < 0.7:
+            # Simple logic for demonstration
+            if fut < maxpain and pcr < 0.6:
                 strategy = "CALL / Bull Call Spread"
-                entry = fut_price
-                exit_price = max_pain
+                entry = fut
+                exit_price = maxpain
                 comment = f"Bullish bias: PCR low, Max Pain above Fut Price"
-                potential = exit_price - entry
-                trade_detail = f"Buy Call at {entry:.2f}"
-            elif fut_price > max_pain and pcr > 0.7:
+                points = maxpain - fut
+                trade_detail = f"Buy Call at {fut:.2f}"
+            elif fut > maxpain and pcr > 0.6:
                 strategy = "PUT / Bear Call Spread"
-                entry = fut_price
-                exit_price = max_pain
+                entry = fut
+                exit_price = maxpain
                 comment = f"Bearish bias: PCR high, Max Pain below Fut Price"
-                potential = entry - exit_price
-                trade_detail = f"Buy Put at {entry:.2f}"
+                points = fut - maxpain
+                trade_detail = f"Buy Put at {fut:.2f}"
+            else:
+                strategy = "Neutral / Iron Condor"
+                entry = fut
+                exit_price = maxpain
+                comment = "Sideways / low opportunity"
+                points = 0.0
+                trade_detail = "-"
 
             strategies.append(strategy)
             entries.append(entry)
             exits.append(exit_price)
             comments.append(comment)
-            potential_points.append(potential)
+            potential_points.append(round(points,2))
             trade_details.append(trade_detail)
 
         df['Strategy'] = strategies
@@ -69,39 +80,33 @@ if uploaded_file is not None:
         df['TradeDetails'] = trade_details
 
         # Reorder columns
-        full_df = df[['Instrument','Strategy','Entry','Exit','Comments','PotentialPoints','TradeDetails',
-                      'FuturePrice','MaxPain','PCR','FuturePercentChange','ATMIV','ATMIVChange',
-                      'IVPercentile','Event','VolumeMultiple','FutureOIPercentChange']]
+        display_cols = ['Instrument','Strategy','Entry','Exit','Comments','PotentialPoints','TradeDetails',
+                        'FuturePrice','MaxPain','PCR','FuturePercentChange','ATMIV','ATMIVChange','IVPercentile',
+                        'Event','VolumeMultiple','FutureOIPercentChange']
+        df = df[display_cols]
 
-        # Move NIFTY and BANKNIFTY to top
-        top_indices = full_df[full_df['Instrument'].isin(['NIFTY','BANKNIFTY'])].index
-        top_df = full_df.loc[top_indices]
-        other_df = full_df.drop(top_indices)
-        full_df = pd.concat([top_df, other_df], ignore_index=True)
+        # Move Nifty and BankNifty to top
+        nifty_banknifty_df = df[df['Instrument'].isin(['NIFTY','BANKNIFTY'])]
+        rest_df = df[~df['Instrument'].isin(['NIFTY','BANKNIFTY'])]
+        top10_df = rest_df.sort_values(by='PotentialPoints', ascending=False).head(10)
+        other_df = rest_df.drop(top10_df.index)
+        final_df = pd.concat([nifty_banknifty_df, top10_df, other_df], ignore_index=True)
 
-        # Highlight strategy colors
+        # Style table
         def highlight_strategy(row):
-            if "CALL" in row['Strategy']:
-                return ['background-color: #d4fcd4']*len(row)
-            elif "PUT" in row['Strategy']:
-                return ['background-color: #fcd4d4']*len(row)
+            color = ''
+            if 'CALL' in row['Strategy']:
+                color = 'background-color: #d4f8d4'  # light green
+            elif 'PUT' in row['Strategy']:
+                color = 'background-color: #f8d4d4'  # light red
             else:
-                return ['']*len(row)
+                color = ''
+            return [color]*len(row)
 
-        # Format numbers to 2 decimals
-        styled_df = full_df.style.apply(highlight_strategy, axis=1)\
-                                 .format({"PotentialPoints": "{:.2f}",
-                                          "Entry": "{:.2f}",
-                                          "Exit": "{:.2f}",
-                                          "FuturePrice": "{:.2f}",
-                                          "MaxPain": "{:.2f}",
-                                          "PCR": "{:.2f}",
-                                          "FuturePercentChange":"{:.2f}",
-                                          "ATMIV":"{:.2f}",
-                                          "ATMIVChange":"{:.2f}",
-                                          "IVPercentile":"{:.2f}",
-                                          "VolumeMultiple":"{:.2f}",
-                                          "FutureOIPercentChange":"{:.2f}"})
+        styled_df = final_df.style.apply(highlight_strategy, axis=1)\
+                                  .format(precision=2)\
+                                  .set_table_styles([{'selector':'th','props':[('text-align','center')]}])\
+                                  .set_properties(**{'text-align':'center'})
 
         st.dataframe(styled_df, use_container_width=True)
 
