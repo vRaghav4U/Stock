@@ -102,35 +102,38 @@ def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=
     except:
         return pd.DataFrame()
     
-    if df.empty or df.shape[0] < max(rsi_length, break_len, atr_len, 50):
+    min_rows_needed = max(rsi_length, break_len, atr_len, 50)
+    if df.empty or df.shape[0] < min_rows_needed:
         st.warning(f"Not enough data to calculate signals for {symbol}.")
-        return pd.DataFrame()
+        return pd.DataFrame()  # Return empty DataFrame instead of crashing
     
+    # Compute indicators
     df['RSI'] = compute_rsi(df['Close'], rsi_length)
     df['HighestHigh'] = df['High'].rolling(break_len).max()
     df['LowestLow'] = df['Low'].rolling(break_len).min()
     df['MA'] = df['Close'].rolling(50).mean()
     df['ATR'] = compute_atr(df, atr_len)
     
-    signals = []
-    for idx in df.index:
-        row = df.loc[idx]
-        # Skip if any rolling value is NaN
-        if pd.isna(row['ATR']) or pd.isna(row['HighestHigh']) or pd.isna(row['LowestLow']) or pd.isna(row['MA']) or pd.isna(row['RSI']):
-            continue
-        
-        longCond  = (row['Close'] > row['HighestHigh']) and (row['RSI'] > 50) and (row['Close'] > row['MA'])
-        shortCond = (row['Close'] < row['LowestLow']) and (row['RSI'] < 50) and (row['Close'] < row['MA'])
-        
-        longSL = row['Close'] - atr_mult * row['ATR']
-        shortSL = row['Close'] + atr_mult * row['ATR']
-        
-        if longCond:
-            signals.append({'Datetime': idx, 'Symbol': symbol, 'Signal': 'CALL', 'StopLoss': longSL, 'Close': row['Close']})
-        elif shortCond:
-            signals.append({'Datetime': idx, 'Symbol': symbol, 'Signal': 'PUT', 'StopLoss': shortSL, 'Close': row['Close']})
+    # Drop rows where any rolling indicator is NaN
+    df = df.dropna(subset=['RSI','HighestHigh','LowestLow','MA','ATR'])
     
-    return pd.DataFrame(signals)
+    if df.empty:
+        st.info(f"No signals can be generated for {symbol} due to insufficient rolling data.")
+        return pd.DataFrame()
+    
+    # Generate signals
+    df['Signal'] = ''
+    df['StopLoss'] = np.nan
+    df.loc[(df['Close'] > df['HighestHigh']) & (df['RSI'] > 50) & (df['Close'] > df['MA']),
+           ['Signal','StopLoss']] = ['CALL', df['Close'] - atr_mult * df['ATR']]
+    df.loc[(df['Close'] < df['LowestLow']) & (df['RSI'] < 50) & (df['Close'] < df['MA']),
+           ['Signal','StopLoss']] = ['PUT', df['Close'] + atr_mult * df['ATR']]
+    
+    signals = df[df['Signal'] != ''][['Signal','StopLoss','Close']]
+    signals.reset_index(inplace=True)
+    signals.rename(columns={'index':'Datetime','Close':'Price'}, inplace=True)
+    
+    return signals
 
 
 # =========================
@@ -161,6 +164,7 @@ if st.button("Fetch Option Chain & Signals"):
         st.info("No signals generated due to insufficient data.")
     else:
         st.dataframe(signals)
+
 
 
 
