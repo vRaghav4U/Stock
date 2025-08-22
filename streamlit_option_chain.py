@@ -115,35 +115,21 @@ def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=
     # Compute RSI
     df['RSI'] = compute_rsi(df['Close'], rsi_length)
     
-    # Compute HighestHigh / LowestLow only if enough rows
-    if df.shape[0] >= break_len:
-        df['HighestHigh'] = df['High'].rolling(break_len).max()
-        df['LowestLow'] = df['Low'].rolling(break_len).min()
-    else:
-        df['HighestHigh'] = np.nan
-        df['LowestLow'] = np.nan
+    # Compute rolling indicators only if enough rows
+    df['HighestHigh'] = df['High'].rolling(break_len).max() if df.shape[0] >= break_len else np.nan
+    df['LowestLow'] = df['Low'].rolling(break_len).min() if df.shape[0] >= break_len else np.nan
+    df['MA'] = df['Close'].rolling(50).mean() if df.shape[0] >= 50 else np.nan
+    df['ATR'] = compute_atr(df, atr_len) if df.shape[0] >= atr_len else np.nan
     
-    # Compute MA only if enough rows
-    if df.shape[0] >= 50:
-        df['MA'] = df['Close'].rolling(50).mean()
-    else:
-        df['MA'] = np.nan
+    # Filter rows where all necessary columns are numeric
+    required_cols = ['RSI','HighestHigh','LowestLow','MA','ATR']
+    for col in required_cols:
+        if col not in df.columns:
+            return pd.DataFrame()  # Skip if column missing
+        df = df[df[col].notna()]
     
-    # Compute ATR only if enough rows
-    if df.shape[0] >= atr_len:
-        df['ATR'] = compute_atr(df, atr_len)
-    else:
-        df['ATR'] = np.nan
-    
-    # Only keep columns that exist
-    cols_to_check = [c for c in ['RSI','HighestHigh','LowestLow','MA','ATR'] if c in df.columns]
-    if len(cols_to_check) < 5:
-        return pd.DataFrame()  # Not enough data to generate signals
-    
-    # Drop NaN rows
-    df = df.dropna(subset=cols_to_check)
     if df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame()  # Nothing to calculate
     
     # Generate signals
     df['Signal'] = ''
@@ -190,6 +176,7 @@ if st.button("Fetch Option Chain & Signals"):
         st.info("No signals generated due to insufficient data.")
     else:
         st.dataframe(signals)
+
 
 
 
