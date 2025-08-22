@@ -5,77 +5,75 @@ import numpy as np
 st.set_page_config(page_title="Sensibull Options Strategy Screener", layout="wide")
 
 st.title("Sensibull Options Strategy Screener")
-st.write("Upload your Sensibull CSV file to see strategy suggestions")
+uploaded_file = st.file_uploader("Upload Sensibull CSV", type="csv")
 
-# File uploader
-uploaded_file = st.file_uploader("Upload Sensibull CSV", type=["csv"])
+def generate_strategy(row):
+    """
+    Simple logic to generate entry, exit, comments, potential profit.
+    """
+    strategy = ""
+    entry = ""
+    exit_ = ""
+    comments = ""
+    potential_profit = 0.0
+
+    # Use simple heuristics based on IV, PCR, Max Pain
+    fut_price = row['FuturePrice']
+    atm_iv = row['ATMIV']
+    pcr = row['PCR']
+    max_pain = row['MaxPain']
+
+    # CALL strategy
+    if fut_price < max_pain and pcr < 0.7:
+        strategy = "CALL"
+        entry = f"Buy Call at {fut_price}"
+        exit_ = f"Target: {max_pain}"
+        comments = "Bullish setup based on Max Pain & PCR"
+        potential_profit = max_pain - fut_price
+    # PUT strategy
+    elif fut_price > max_pain and pcr > 0.8:
+        strategy = "PUT"
+        entry = f"Buy Put at {fut_price}"
+        exit_ = f"Target: {max_pain}"
+        comments = "Bearish setup based on Max Pain & PCR"
+        potential_profit = fut_price - max_pain
+    else:
+        strategy = "Neutral"
+        entry = f"Hold"
+        exit_ = f"N/A"
+        comments = "No clear bias"
+        potential_profit = 0.0
+
+    return pd.Series([strategy, entry, exit_, comments, potential_profit])
+
+def highlight_strategy(row):
+    if row['Strategy'] == "CALL":
+        return ['background-color: lightgreen']*len(row)
+    elif row['Strategy'] == "PUT":
+        return ['background-color: lightcoral']*len(row)
+    else:
+        return ['']*len(row)
 
 if uploaded_file is not None:
     try:
-        # Read CSV
         df = pd.read_csv(uploaded_file)
-        
-        # Ensure numeric columns are correct
-        numeric_cols = ['FuturePrice', 'ATMIV', 'ATMIVChange', 'IVPercentile', 
-                        'FutureOIPercentChange', 'PCR', 'MaxPain']
-        for col in numeric_cols:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-        
-        # Drop rows with missing FuturePrice or PCR
-        df = df.dropna(subset=['FuturePrice', 'PCR'])
-        
-        # Strategy assignment function
-        def assign_strategy(row):
-            try:
-                # Bullish strategy
-                if row['PCR'] < 0.7 and row['FuturePercentChange'] >= 0:
-                    return "Buy Call / Bullish Spread"
-                # Bearish strategy
-                elif row['PCR'] > 1.0 and row['FuturePercentChange'] <= 0:
-                    return "Buy Put / Bearish Spread"
-                # Neutral / high IV
-                elif row['IVPercentile'] > 75:
-                    return "Iron Condor / Short Straddle"
-                else:
-                    return "Neutral / Wait"
-            except:
-                return "Unknown"
+        required_cols = ['Instrument','FuturePrice','ATMIV','PCR','MaxPain']
+        for col in required_cols:
+            if col not in df.columns:
+                st.error(f"Column '{col}' not found in file!")
+                st.stop()
+        # Generate strategy columns
+        df[['Strategy','Entry','Exit','Comments','PotentialProfit']] = df.apply(generate_strategy, axis=1)
 
-        df['Strategy'] = df.apply(assign_strategy, axis=1)
-        
-        # Simple profit/loss estimation (in points)
-        def estimate_profit(row):
-            try:
-                if "Bullish" in row['Strategy']:
-                    return max(row['MaxPain'] - row['FuturePrice'], 0)
-                elif "Bearish" in row['Strategy']:
-                    return max(row['FuturePrice'] - row['MaxPain'], 0)
-                elif "Iron" in row['Strategy']:
-                    return row['ATMIV']  # rough estimate for premium collected
-                else:
-                    return 0
-            except:
-                return 0
+        # Sort by PotentialProfit and take top 10
+        df_top = df.sort_values(by='PotentialProfit', ascending=False).head(10)
 
-        df['PotentialProfit'] = df.apply(estimate_profit, axis=1)
-
-        # Highlight strategy
-        def highlight_strategy(row):
-            if "Bullish" in row['Strategy']:
-                return ['background-color: #b6fcd5']*len(row)
-            elif "Bearish" in row['Strategy']:
-                return ['background-color: #ffb3b3']*len(row)
-            elif "Iron" in row['Strategy']:
-                return ['background-color: #f7f7b3']*len(row)
-            else:
-                return ['background-color: #f0f0f0']*len(row)
-
-        st.write("Top Option Strategies")
+        st.write("Top 10 Option Strategies based on Potential Profit")
         st.dataframe(
-            df.style.apply(highlight_strategy, axis=1),
+            df_top.style.apply(highlight_strategy, axis=1),
             width=1400,
             height=600
         )
-        
+
     except Exception as e:
         st.error(f"Error processing file: {e}")
