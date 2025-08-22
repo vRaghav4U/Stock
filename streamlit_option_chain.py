@@ -102,8 +102,7 @@ def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=
     except:
         return pd.DataFrame()
     
-    # If too few rows, return empty signals
-    if df.empty or df.shape[0] < max(rsi_length, break_len, atr_len):
+    if df.empty or df.shape[0] < max(rsi_length, break_len, atr_len, 50):
         st.warning(f"Not enough data to calculate signals for {symbol}.")
         return pd.DataFrame()
     
@@ -111,23 +110,20 @@ def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=
     df['HighestHigh'] = df['High'].rolling(break_len).max()
     df['LowestLow'] = df['Low'].rolling(break_len).min()
     df['MA'] = df['Close'].rolling(50).mean()
-    
-    # If not enough rows for ATR, fill with NaN
-    if df.shape[0] < atr_len + 1:
-        df['ATR'] = pd.Series([np.nan]*len(df), index=df.index)
-    else:
-        df['ATR'] = compute_atr(df, atr_len)
+    df['ATR'] = compute_atr(df, atr_len)
     
     signals = []
     for idx in df.index:
-        atr_value = df['ATR'].loc[idx]
-        if pd.isna(atr_value):
-            continue
         row = df.loc[idx]
-        longCond  = row['Close'] > row['HighestHigh'] and row['RSI'] > 50 and row['Close'] > row['MA']
-        shortCond = row['Close'] < row['LowestLow'] and row['RSI'] < 50 and row['Close'] < row['MA']
-        longSL = row['Close'] - atr_mult * atr_value
-        shortSL = row['Close'] + atr_mult * atr_value
+        # Skip if any rolling value is NaN
+        if pd.isna(row['ATR']) or pd.isna(row['HighestHigh']) or pd.isna(row['LowestLow']) or pd.isna(row['MA']) or pd.isna(row['RSI']):
+            continue
+        
+        longCond  = (row['Close'] > row['HighestHigh']) and (row['RSI'] > 50) and (row['Close'] > row['MA'])
+        shortCond = (row['Close'] < row['LowestLow']) and (row['RSI'] < 50) and (row['Close'] < row['MA'])
+        
+        longSL = row['Close'] - atr_mult * row['ATR']
+        shortSL = row['Close'] + atr_mult * row['ATR']
         
         if longCond:
             signals.append({'Datetime': idx, 'Symbol': symbol, 'Signal': 'CALL', 'StopLoss': longSL, 'Close': row['Close']})
@@ -165,5 +161,6 @@ if st.button("Fetch Option Chain & Signals"):
         st.info("No signals generated due to insufficient data.")
     else:
         st.dataframe(signals)
+
 
 
