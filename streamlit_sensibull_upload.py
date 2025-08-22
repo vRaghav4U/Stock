@@ -1,81 +1,127 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 
 st.set_page_config(layout="wide")
-st.title("Sensibull Options Strategy Screener")
 
+# Title with "by Ketan" on next line
+st.markdown("""
+# Option Strategy Screener  
+<span style='font-size:20px; color:gray;'>by Ketan</span>
+""", unsafe_allow_html=True)
+
+# Sensibull link as a button
+st.markdown("[Go to Sensibull Options Screener](https://web.sensibull.com/options-screener?view=table)", unsafe_allow_html=True)
+
+# File uploader
 uploaded_file = st.file_uploader("Upload Sensibull CSV", type="csv")
 
-def determine_strategy(row):
-    fut = row['FuturePrice']
-    maxpain = row['MaxPain']
-    pcr = row['PCR']
+# Function to generate strategy signals
+def generate_strategy(df):
+    strategies = []
+    entries = []
+    exits = []
+    comments = []
+    potential = []
+    trade_details = []
 
-    strategy = "Long Call/Put"
-    entry = fut
-    exit_ = fut
-    potential_points = 0
-    comments = "Neutral, low edge"
-    trade_details = f"Buy ATM at {fut}"
+    # Ensure NIFTY and BANKNIFTY are at top
+    df = df.sort_values(by='Instrument', key=lambda x: x.map(lambda y: 0 if y in ['NIFTY','BANKNIFTY'] else 1))
 
-    if fut < maxpain and pcr < 0.6:
-        strategy = "Bull Call Spread"
-        entry = fut
-        exit_ = maxpain
-        potential_points = exit_ - entry
-        comments = "Bullish bias: PCR low, Max Pain above FutPrice"
-        trade_details = f"Buy Call at {fut}, Sell Call at {maxpain}"
-    elif fut > maxpain and pcr > 0.7:
-        strategy = "Bear Put Spread"
-        entry = fut
-        exit_ = maxpain
-        potential_points = entry - exit_
-        comments = "Bearish bias: PCR high, Max Pain below FutPrice"
-        trade_details = f"Buy Put at {fut}, Sell Put at {maxpain}"
+    for idx, row in df.iterrows():
+        fut_price = row['FuturePrice']
+        pcr = row['PCR']
+        max_pain = row['MaxPain']
 
-    return pd.Series([strategy, entry, exit_, comments, potential_points, trade_details])
+        # Default values
+        strategy = ""
+        entry = ""
+        exit_ = ""
+        comment = ""
+        potential_points = ""
+        trade_detail = ""
 
-if uploaded_file:
+        # NIFTY and BANKNIFTY as special cases
+        if row['Instrument'] == 'NIFTY':
+            strategy = "CALL / Bull Call Spread"
+            entry = fut_price
+            exit_ = max_pain
+            comment = f"Bullish bias: PCR low, Max Pain above Fut Price"
+            potential_points = max_pain - fut_price
+            trade_detail = f"Buy Call at {fut_price}, Target: {max_pain}"
+        elif row['Instrument'] == 'BANKNIFTY':
+            strategy = "CALL / Bull Call Spread"
+            entry = fut_price
+            exit_ = max_pain
+            comment = f"Bullish bias: PCR low, Max Pain above Fut Price"
+            potential_points = max_pain - fut_price
+            trade_detail = f"Buy Call at {fut_price}, Target: {max_pain}"
+        else:
+            # Based on PCR and Max Pain
+            if fut_price < max_pain and pcr < 0.7:
+                strategy = "CALL / Bull Call Spread"
+                entry = fut_price
+                exit_ = max_pain
+                comment = "Bullish bias: PCR low, Max Pain above Fut Price"
+                potential_points = max_pain - fut_price
+                trade_detail = f"Buy Call at {fut_price}, Target: {max_pain}"
+            elif fut_price > max_pain and pcr > 0.7:
+                strategy = "PUT / Bear Call Spread"
+                entry = fut_price
+                exit_ = max_pain
+                comment = "Bearish bias: PCR high, Max Pain below Fut Price"
+                potential_points = fut_price - max_pain
+                trade_detail = f"Buy Put at {fut_price}, Target: {max_pain}"
+            else:
+                strategy = "NEUTRAL / Iron Condor"
+                entry = fut_price
+                exit_ = max_pain
+                comment = "Neutral strategy: PCR moderate, near Max Pain"
+                potential_points = abs(fut_price - max_pain)/2
+                trade_detail = f"Sell Spread around {fut_price}"
+
+        strategies.append(strategy)
+        entries.append(entry)
+        exits.append(exit_)
+        comments.append(comment)
+        potential.append(potential_points)
+        trade_details.append(trade_detail)
+
+    df['Strategy'] = strategies
+    df['Entry'] = entries
+    df['Exit'] = exits
+    df['Comments'] = comments
+    df['PotentialPoints'] = potential
+    df['TradeDetails'] = trade_details
+
+    # Arrange columns
+    display_cols = ['Instrument','Strategy','Entry','Exit','Comments','PotentialPoints','TradeDetails',
+                    'FuturePrice','MaxPain','PCR','FuturePercentChange','ATMIV','ATMIVChange',
+                    'IVPercentile','Event','VolumeMultiple','FutureOIPercentChange']
+    df = df[display_cols]
+    return df
+
+if uploaded_file is not None:
     try:
         df = pd.read_csv(uploaded_file)
-        # Ensure numeric types
-        numeric_cols = ['FuturePrice', 'MaxPain', 'PCR']
+
+        # Ensure numeric conversion
+        numeric_cols = ['FuturePrice','MaxPain','PCR','FuturePercentChange','ATMIV','ATMIVChange','IVPercentile','VolumeMultiple','FutureOIPercentChange']
         for col in numeric_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        # Insert NIFTY and BANKNIFTY at top if not already
-        nifty_row = {'Instrument':'NIFTY','FuturePrice':24890,'MaxPain':24950,'PCR':0.69}
-        banknifty_row = {'Instrument':'BANKNIFTY','FuturePrice':55260,'MaxPain':55500,'PCR':0.57}
-        df = pd.concat([pd.DataFrame([nifty_row, banknifty_row]), df], ignore_index=True)
+        df_strategy = generate_strategy(df)
 
-        # Apply strategy function
-        df[['Strategy','Entry','Exit','Comments','PotentialPoints','TradeDetails']] = df.apply(determine_strategy, axis=1)
-
-        # Reorder columns
-        cols_sequence = ['Instrument','Strategy','Entry','Exit','Comments','PotentialPoints','TradeDetails',
-                         'FuturePrice','MaxPain','PCR','FuturePercentChange','ATMIV','ATMIVChange',
-                         'IVPercentile','Event','VolumeMultiple','FutureOIPercentChange']
-        df = df[[col for col in cols_sequence if col in df.columns]]
-
-        # Styling
+        # Highlight bullish green, bearish red
         def highlight_strategy(row):
-            if "Bull" in row['Strategy']:
-                return ['background-color: #b6fcb6']*len(row)
-            elif "Bear" in row['Strategy']:
-                return ['background-color: #ffb3b3']*len(row)
-            else:
-                return ['']*len(row)
+            color = ''
+            if 'Bull' in row['Strategy']:
+                color = 'background-color: lightgreen'
+            elif 'Bear' in row['Strategy']:
+                color = 'background-color: lightcoral'
+            return [color]*len(row)
 
-        st.subheader("All Strategies")
-        st.dataframe(df.style.apply(highlight_strategy, axis=1).set_table_attributes('style="width:100%"'))
-
-        # Top 10 trades by PotentialPoints
-        top_trades = df.sort_values(by='PotentialPoints', ascending=False).head(10)
-        st.subheader("Top 10 Trades by Potential Points")
-        st.dataframe(top_trades.style.apply(highlight_strategy, axis=1).set_table_attributes('style="width:100%"'))
+        st.dataframe(df_strategy.style.apply(highlight_strategy, axis=1).set_precision(2), use_container_width=True)
 
     except Exception as e:
         st.error(f"Error processing file: {e}")
-
-else:
-    st.info("Please upload a Sensibull CSV to see strategies.")
