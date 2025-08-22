@@ -21,8 +21,7 @@ def recommend_strategy(row):
     # High volatility / Straddle
     if iv_level > 40 and iv_change > 0:
         strategy = 'STRADDLE'
-        exit = S
-        potential = 'High (Buy Call + Put ATM)'
+        potential = 0
         comment = 'Expect high volatility, consider ATM Call & Put'
 
     # Long Call
@@ -56,17 +55,18 @@ def recommend_strategy(row):
     # Neutral / Iron Condor
     elif 0.5 <= PCR <= 0.7 and abs(iv_change) < 2:
         strategy = 'IRON CONDOR'
-        exit = S
         potential = 0
         comment = 'Neutral market, consider Iron Condor'
 
-    return pd.Series([strategy, entry, exit, potential, comment])
+    potential_percent = (potential / entry * 100) if entry != 0 else 0
+
+    return pd.Series([strategy, entry, exit, potential, potential_percent, comment])
 
 # -----------------------------
 # Streamlit UI
 # -----------------------------
 st.title("Sensibull Option Strategy Analyzer")
-st.write("Upload Sensibull CSV and get strategy recommendations (CALL, PUT, Spreads, Iron Condor).")
+st.write("Upload Sensibull CSV and get strategy recommendations with color-coded bullish/bearish signals.")
 
 uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
 
@@ -83,19 +83,28 @@ if uploaded_file:
         df.dropna(subset=numeric_cols, inplace=True)
 
         # Apply strategy recommendation
-        df[['Strategy','Entry','Exit','PotentialProfit','Comment']] = df.apply(recommend_strategy, axis=1)
+        df[['Strategy','Entry','Exit','PotentialProfit','PotentialPercent','Comment']] = df.apply(recommend_strategy, axis=1)
 
-        # Sort by PotentialProfit descending if numeric
-        numeric_mask = df['PotentialProfit'].apply(lambda x: isinstance(x, (int, float)))
-        df_sorted = df[numeric_mask].sort_values(by='PotentialProfit', ascending=False)
-        df_non_numeric = df[~numeric_mask]
+        # Color coding
+        def highlight_strategy(row):
+            color = ''
+            if row['Strategy'] in ['LONG CALL', 'BULL CALL SPREAD']:
+                color = 'background-color: lightgreen'
+            elif row['Strategy'] in ['LONG PUT', 'BEAR PUT SPREAD']:
+                color = 'background-color: salmon'
+            elif row['Strategy'] in ['IRON CONDOR', 'STRADDLE']:
+                color = 'background-color: lightyellow'
+            else:
+                color = ''
+            return [color]*len(row)
 
-        # Merge numeric and non-numeric potential
-        df_final = pd.concat([df_sorted, df_non_numeric])
-
-        # Show top 10 strategies
+        # Full-width dataframe
         st.subheader("Top 10 Option Strategies")
-        st.dataframe(df_final.head(10))
+        styled_df = df.head(10).style.apply(highlight_strategy, axis=1).format({
+            'PotentialProfit': '{:.2f} pts',
+            'PotentialPercent': '{:.2f} %'
+        })
+        st.dataframe(styled_df, use_container_width=True)
 
     except Exception as e:
         st.error(f"Error processing file: {e}")
