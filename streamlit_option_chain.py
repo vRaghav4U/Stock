@@ -51,16 +51,18 @@ def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=
     df['MA'] = df['Close'].rolling(50, min_periods=1).mean()
     df['ATR'] = compute_atr(df, atr_len)
     
-    # Ensure numeric
-    for col in ['Close','HighestHigh','LowestLow','MA','RSI','ATR']:
-        if col not in df.columns:
-            return pd.DataFrame()
+   # Ensure numeric and handle missing columns
+for col in ['Close','High','Low','HighestHigh','LowestLow','MA','RSI','ATR']:
+    if col in df.columns:
         df[col] = pd.to_numeric(df[col], errors='coerce')
-    
-    # Filter NaNs
-    df = df.dropna(subset=['Close','HighestHigh','LowestLow','MA','RSI','ATR'])
-    if df.empty:
-        return pd.DataFrame()
+    else:
+        df[col] = np.nan
+
+# Filter rows with NaN in required columns
+df = df.dropna(subset=['Close','HighestHigh','LowestLow','MA','RSI','ATR'])
+if df.empty:
+    return pd.DataFrame()
+
     
     # Generate signals
     df['Signal'] = ''
@@ -106,3 +108,4 @@ if st.button("Generate Signals"):
         
         st.subheader(f"Signals for {symbol.upper()}")
         st.dataframe(signals.style.apply(color_row, axis=1))
+
