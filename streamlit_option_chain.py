@@ -105,7 +105,7 @@ def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=
     min_rows_needed = max(rsi_length, break_len, atr_len, 50)
     if df.empty or df.shape[0] < min_rows_needed:
         st.warning(f"Not enough data to calculate signals for {symbol}.")
-        return pd.DataFrame()  # Return empty DataFrame instead of crashing
+        return pd.DataFrame()  # Return empty
     
     # Compute indicators
     df['RSI'] = compute_rsi(df['Close'], rsi_length)
@@ -114,9 +114,14 @@ def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=
     df['MA'] = df['Close'].rolling(50).mean()
     df['ATR'] = compute_atr(df, atr_len)
     
-    # Drop rows where any rolling indicator is NaN
-    df = df.dropna(subset=['RSI','HighestHigh','LowestLow','MA','ATR'])
+    # Ensure all columns exist before dropping NaN
+    required_cols = ['RSI','HighestHigh','LowestLow','MA','ATR']
+    if not all(col in df.columns for col in required_cols):
+        st.info(f"Not enough rolling data for {symbol} to generate signals.")
+        return pd.DataFrame()
     
+    # Drop rows with NaNs
+    df = df.dropna(subset=required_cols)
     if df.empty:
         st.info(f"No signals can be generated for {symbol} due to insufficient rolling data.")
         return pd.DataFrame()
@@ -164,6 +169,7 @@ if st.button("Fetch Option Chain & Signals"):
         st.info("No signals generated due to insufficient data.")
     else:
         st.dataframe(signals)
+
 
 
 
