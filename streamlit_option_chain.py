@@ -1,11 +1,11 @@
-# streamlit_option_chain.py
+# streamlit_option_chain_reliable.py
 
 import streamlit as st
 import pandas as pd
 import requests
 import yfinance as yf
 import numpy as np
-from time import sleep
+import time
 
 # =========================
 # Helper functions
@@ -31,9 +31,9 @@ def compute_atr(df, period=14):
 def get_optionable_stocks():
     headers = {"User-Agent": "Mozilla/5.0"}
     session = requests.Session()
-    session.get("https://www.nseindia.com", headers=headers)
-    url_eq = "https://www.nseindia.com/api/live-equity-derivatives?index=optstock"
     try:
+        session.get("https://www.nseindia.com", headers=headers)
+        url_eq = "https://www.nseindia.com/api/live-equity-derivatives?index=optstock"
         response = session.get(url_eq, headers=headers).json()
         stocks = [x['symbol'] for x in response['data']]
     except:
@@ -41,29 +41,57 @@ def get_optionable_stocks():
     return stocks
 
 def fetch_option_chain(symbol):
-    headers = {"User-Agent": "Mozilla/5.0"}
-    url = f"https://www.nseindia.com/api/option-chain-equities?symbol={symbol}" if symbol.upper() not in ["NIFTY","BANKNIFTY"] else f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol}"
-    
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Referer": "https://www.nseindia.com"
+    }
     session = requests.Session()
-    session.get("https://www.nseindia.com", headers=headers)
-    response = session.get(url, headers=headers).json()
+    try:
+        session.get("https://www.nseindia.com", headers=headers)
+        url = f"https://www.nseindia.com/api/option-chain-equities?symbol={symbol}" if symbol.upper() not in ["NIFTY","BANKNIFTY"] else f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol}"
+        
+        for _ in range(3):
+            try:
+                response = session.get(url, headers=headers, timeout=5)
+                data = response.json()
+                break
+            except:
+                time.sleep(2)
+        else:
+            st.warning(f"NSE blocked requests for {symbol}, falling back to Yahoo Finance.")
+            return fetch_option_chain_yf(symbol)
+        
+        data_list = []
+        records = data['records']['data']
+        for rec in records:
+            ce = rec.get('CE')
+            pe = rec.get('PE')
+            strikePrice = rec['strikePrice']
+            if ce:
+                data_list.append({'Type':'CE','Strike':strikePrice,'LTP':ce['lastPrice'],'OI':ce['openInterest'],'Volume':ce['totalTradedVolume']})
+            if pe:
+                data_list.append({'Type':'PE','Strike':strikePrice,'LTP':pe['lastPrice'],'OI':pe['openInterest'],'Volume':pe['totalTradedVolume']})
+        return pd.DataFrame(data_list)
     
-    data = []
-    records = response['records']['data']
-    for rec in records:
-        ce = rec.get('CE')
-        pe = rec.get('PE')
-        strikePrice = rec['strikePrice']
-        if ce:
-            data.append({'Type':'CE','Strike':strikePrice,'LTP':ce['lastPrice'],'OI':ce['openInterest'],'Volume':ce['totalTradedVolume']})
-        if pe:
-            data.append({'Type':'PE','Strike':strikePrice,'LTP':pe['lastPrice'],'OI':pe['openInterest'],'Volume':pe['totalTradedVolume']})
-    df = pd.DataFrame(data)
-    return df
+    except Exception as e:
+        st.warning(f"Failed to fetch from NSE: {e}. Using Yahoo Finance fallback.")
+        return fetch_option_chain_yf(symbol)
+
+def fetch_option_chain_yf(symbol):
+    # Minimal fallback: just fetch last close price as “CE” and “PE”
+    df = yf.download(symbol+".NS" if symbol.upper() not in ["NIFTY","BANKNIFTY"] else "^NSEI", period="5d")
+    last_close = df['Close'].iloc[-1]
+    data_list = [
+        {'Type':'CE','Strike':last_close,'LTP':last_close,'OI':0,'Volume':0},
+        {'Type':'PE','Strike':last_close,'LTP':last_close,'OI':0,'Volume':0}
+    ]
+    return pd.DataFrame(data_list)
 
 def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=1.5):
     try:
-        df = yf.download(symbol+".NS", period="60d", interval="15m")
+        df = yf.download(symbol+".NS" if symbol.upper() not in ["NIFTY","BANKNIFTY"] else "^NSEI", period="60d", interval="15m")
     except:
         return pd.DataFrame()
     
@@ -89,7 +117,8 @@ def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=
 # =========================
 # Streamlit UI
 # =========================
-st.title("NSE Option Chain & Trading Signals")
+
+st.title("NSE Option Chain & Reliable Signals")
 
 # Dropdown for stocks
 optionable_stocks = get_optionable_stocks()
@@ -101,10 +130,10 @@ if st.button("Fetch Option Chain & Signals"):
     with st.spinner("Fetching data..."):
         oc = fetch_option_chain(symbol)
         signals = calculate_signals(symbol)
-        sleep(1)
+        time.sleep(1)
     
     st.subheader("Option Chain")
-    st.dataframe(oc)  # interactive table
+    st.dataframe(oc)
     
     st.subheader("Generated Signals")
     st.dataframe(signals)
