@@ -3,58 +3,66 @@ import pandas as pd
 import numpy as np
 
 st.set_page_config(page_title="Sensibull Options Strategy Screener", layout="wide")
-
 st.title("Sensibull Options Strategy Screener")
+
 uploaded_file = st.file_uploader("Upload Sensibull CSV", type="csv")
 
-def generate_strategy(row):
-    """
-    Simple logic to generate entry, exit, comments, potential profit.
-    """
+def option_strategy(row):
+    fut_price = row['FuturePrice']
+    pcr = row['PCR']
+    max_pain = row['MaxPain']
+
     strategy = ""
     entry = ""
     exit_ = ""
     comments = ""
     potential_profit = 0.0
 
-    # Use simple heuristics based on IV, PCR, Max Pain
-    fut_price = row['FuturePrice']
-    atm_iv = row['ATMIV']
-    pcr = row['PCR']
-    max_pain = row['MaxPain']
-
-    # CALL strategy
+    # Logic for multiple strategies
     if fut_price < max_pain and pcr < 0.7:
-        strategy = "CALL"
+        # Bullish strategies
+        strategy = "CALL / Bull Call Spread"
         entry = f"Buy Call at {fut_price}"
         exit_ = f"Target: {max_pain}"
-        comments = "Bullish setup based on Max Pain & PCR"
+        comments = "Bullish bias: PCR low, Max Pain above Fut Price"
         potential_profit = max_pain - fut_price
-    # PUT strategy
     elif fut_price > max_pain and pcr > 0.8:
-        strategy = "PUT"
+        # Bearish strategies
+        strategy = "PUT / Bear Call Spread"
         entry = f"Buy Put at {fut_price}"
         exit_ = f"Target: {max_pain}"
-        comments = "Bearish setup based on Max Pain & PCR"
+        comments = "Bearish bias: PCR high, Max Pain below Fut Price"
+        potential_profit = fut_price - max_pain
+    elif fut_price < max_pain and 0.7 <= pcr <= 0.8:
+        strategy = "Bull Put Spread"
+        entry = f"Sell Put at {fut_price}"
+        exit_ = f"Target: {max_pain}"
+        comments = "Neutral to bullish range-bound"
+        potential_profit = max_pain - fut_price
+    elif fut_price > max_pain and 0.7 <= pcr <= 0.8:
+        strategy = "Bear Put Spread"
+        entry = f"Sell Put at {fut_price}"
+        exit_ = f"Target: {max_pain}"
+        comments = "Neutral to bearish range-bound"
         potential_profit = fut_price - max_pain
     else:
-        strategy = "Neutral"
-        entry = f"Hold"
-        exit_ = f"N/A"
-        comments = "No clear bias"
+        strategy = "Neutral / No Trade"
+        entry = "Hold"
+        exit_ = "N/A"
+        comments = "No clear bias or low profit potential"
         potential_profit = 0.0
 
     return pd.Series([strategy, entry, exit_, comments, potential_profit])
 
 def highlight_strategy(row):
-    if row['Strategy'] == "CALL":
+    if "CALL" in row['Strategy']:
         return ['background-color: lightgreen']*len(row)
-    elif row['Strategy'] == "PUT":
+    elif "PUT" in row['Strategy']:
         return ['background-color: lightcoral']*len(row)
     else:
         return ['']*len(row)
 
-if uploaded_file is not None:
+if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
         required_cols = ['Instrument','FuturePrice','ATMIV','PCR','MaxPain']
@@ -62,16 +70,15 @@ if uploaded_file is not None:
             if col not in df.columns:
                 st.error(f"Column '{col}' not found in file!")
                 st.stop()
-        # Generate strategy columns
-        df[['Strategy','Entry','Exit','Comments','PotentialProfit']] = df.apply(generate_strategy, axis=1)
 
-        # Sort by PotentialProfit and take top 10
+        # Generate strategies
+        df[['Strategy','Entry','Exit','Comments','PotentialProfit']] = df.apply(option_strategy, axis=1)
         df_top = df.sort_values(by='PotentialProfit', ascending=False).head(10)
 
         st.write("Top 10 Option Strategies based on Potential Profit")
         st.dataframe(
             df_top.style.apply(highlight_strategy, axis=1),
-            width=1400,
+            width=1600,
             height=600
         )
 
