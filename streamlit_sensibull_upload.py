@@ -7,13 +7,13 @@ from scipy.stats import norm
 st.set_page_config(page_title="Top Option Strategies", layout="wide")
 st.title("Top Option Strategies from Sensibull CSV with P/L")
 
-# --- Black-Scholes for ATM Option Premium ---
+# --- Black-Scholes for ATM Option Premium with safety ---
 def bs_option_price(S, K, T=30/365, r=0.05, sigma=0.3, option_type='call'):
-    """S = Spot price, K = Strike, T = time in years, r = risk-free, sigma = IV"""
-    if sigma <= 0:
+    """Black-Scholes Option Price with safety checks"""
+    if sigma <= 0 or T <= 0:
         return 0.0
-    d1 = (log(S/K) + (r + 0.5*sigma**2)*T) / (sigma * sqrt(T))
-    d2 = d1 - sigma*sqrt(T)
+    d1 = (np.log(S/K) + (r + 0.5*sigma**2)*T) / (sigma * np.sqrt(T))
+    d2 = d1 - sigma*np.sqrt(T)
     if option_type=='call':
         return S*norm.cdf(d1) - K*exp(-r*T)*norm.cdf(d2)
     else:
@@ -28,13 +28,13 @@ if uploaded_file:
         df = pd.read_csv(uploaded_file)
         df.columns = df.columns.str.strip()
         
-        # Convert numeric columns
+        # Convert numeric columns safely
         numeric_cols = ['FuturePrice','ATMIV','ATMIVChange','IVPercentile','FutureOIPercentChange','PCR','MaxPain']
         for col in numeric_cols:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
         
-        # Generate signals
+        # Initialize strategy columns
         df['Signal'] = 'HOLD'
         df['Comments'] = ''
         df['Entry'] = df['FuturePrice']
@@ -46,12 +46,12 @@ if uploaded_file:
 
         # Strategy logic
         if all(x in df.columns for x in ['FuturePrice','MaxPain','PCR','ATMIV']):
-            # CALL signal
+            # CALL signal: FuturePrice > MaxPain & low PCR
             call_cond = (df['FuturePrice'] > df['MaxPain']) & (df['PCR'] < 0.8)
             df.loc[call_cond, 'Signal'] = 'CALL'
             df.loc[call_cond, 'Comments'] = "Bullish: Future > Max Pain & low PCR"
 
-            # PUT signal
+            # PUT signal: FuturePrice < MaxPain & high PCR
             put_cond = (df['FuturePrice'] < df['MaxPain']) & (df['PCR'] > 1.2)
             df.loc[put_cond, 'Signal'] = 'PUT'
             df.loc[put_cond, 'Comments'] = "Bearish: Future < Max Pain & high PCR"
@@ -61,7 +61,7 @@ if uploaded_file:
                 if row['Signal'] != 'HOLD':
                     S = row['FuturePrice']
                     K = round(S/50)*50  # Approx ATM strike rounded to nearest 50
-                    sigma = row['ATMIV']/100
+                    sigma = row['ATMIV']/100 if row['ATMIV'] > 0 else 0.01
                     option_type = row['Signal'].lower()
                     premium = bs_option_price(S, K, sigma=sigma, option_type=option_type)
                     df.at[idx,'Premium'] = round(premium,2)
