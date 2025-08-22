@@ -27,58 +27,69 @@ def compute_atr(df, length=14):
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     atr = tr.rolling(length, min_periods=1).mean()
     return atr
-
 # =========================
 # Main Signal Calculation
 # =========================
 def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=1.5):
-    # Download data (Yahoo fallback)
+    # ----------------------
+    # Download data
+    # ----------------------
     try:
-        ticker = symbol+".NS" if symbol.upper() not in ["NIFTY","BANKNIFTY"] else "^NSEI"
+        ticker = symbol + ".NS" if symbol.upper() not in ["NIFTY", "BANKNIFTY"] else "^NSEI"
         df = yf.download(ticker, period="60d", interval="15m")
-    except:
+    except Exception as e:
+        print(f"Error downloading {symbol}: {e}")
+        return pd.DataFrame()
+
+    if df.empty:
         return pd.DataFrame()
     
-    # Minimum rows check
-    min_rows_needed = max(rsi_length, break_len, atr_len, 50)
-    if df.empty or df.shape[0] < min_rows_needed:
-        return pd.DataFrame()
-    
-    # Compute indicators
+    # Flatten multi-level columns (happens for indices)
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+
+    # ----------------------
+    # Compute Indicators
+    # ----------------------
     df['RSI'] = compute_rsi(df['Close'], rsi_length)
     df['HighestHigh'] = df['High'].rolling(break_len, min_periods=1).max()
     df['LowestLow'] = df['Low'].rolling(break_len, min_periods=1).min()
     df['MA'] = df['Close'].rolling(50, min_periods=1).mean()
     df['ATR'] = compute_atr(df, atr_len)
-    
-   # Ensure numeric and handle missing columns
+
+    # ----------------------
+    # Ensure numeric and handle missing columns
+    # ----------------------
     for col in ['Close','High','Low','HighestHigh','LowestLow','MA','RSI','ATR']:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
         else:
             df[col] = np.nan
 
-    # Filter rows with NaN in required columns
+    # Drop rows with NaNs in critical columns
     df = df.dropna(subset=['Close','HighestHigh','LowestLow','MA','RSI','ATR'])
     if df.empty:
         return pd.DataFrame()
 
-    
-    # Generate signals
+    # ----------------------
+    # Generate Signals
+    # ----------------------
     df['Signal'] = ''
     df['StopLoss'] = np.nan
-    
+
     long_mask  = (df['Close'] > df['HighestHigh']) & (df['RSI'] > 50) & (df['Close'] > df['MA'])
     short_mask = (df['Close'] < df['LowestLow']) & (df['RSI'] < 50) & (df['Close'] < df['MA'])
-    
+
     df.loc[long_mask, ['Signal','StopLoss']]  = ['CALL', df['Close'] - atr_mult * df['ATR']]
     df.loc[short_mask, ['Signal','StopLoss']] = ['PUT',  df['Close'] + atr_mult * df['ATR']]
-    
-    # Prepare final table
-    signals = df[df['Signal'] != ''][['Signal','StopLoss','Close']]
+
+    # ----------------------
+    # Return only rows with signals
+    # ----------------------
+    signals = df[df['Signal'] != ''][['Signal','StopLoss','Close']].copy()
     signals.reset_index(inplace=True)
     signals.rename(columns={'index':'Datetime','Close':'Price'}, inplace=True)
-    
+
     return signals
 
 # =========================
@@ -108,5 +119,6 @@ if st.button("Generate Signals"):
         
         st.subheader(f"Signals for {symbol.upper()}")
         st.dataframe(signals.style.apply(color_row, axis=1))
+
 
 
