@@ -94,12 +94,15 @@ def fetch_option_chain_yf(symbol):
         {'Type':'PE','Strike':last_close,'LTP':last_close,'OI':0,'Volume':0}
     ]
     return pd.DataFrame(data_list)
+
 def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=1.5):
     try:
-        df = yf.download(symbol+".NS" if symbol.upper() not in ["NIFTY","BANKNIFTY"] else "^NSEI", period="60d", interval="15m")
+        df = yf.download(symbol+".NS" if symbol.upper() not in ["NIFTY","BANKNIFTY"] else "^NSEI",
+                         period="60d", interval="15m")
     except:
         return pd.DataFrame()
     
+    # If too few rows, return empty signals
     if df.empty or df.shape[0] < max(rsi_length, break_len, atr_len):
         st.warning(f"Not enough data to calculate signals for {symbol}.")
         return pd.DataFrame()
@@ -108,13 +111,18 @@ def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=
     df['HighestHigh'] = df['High'].rolling(break_len).max()
     df['LowestLow'] = df['Low'].rolling(break_len).min()
     df['MA'] = df['Close'].rolling(50).mean()
-    df['ATR'] = compute_atr(df, atr_len)
+    
+    # If not enough rows for ATR, fill with NaN
+    if df.shape[0] < atr_len + 1:
+        df['ATR'] = pd.Series([np.nan]*len(df), index=df.index)
+    else:
+        df['ATR'] = compute_atr(df, atr_len)
     
     signals = []
     for idx in df.index:
-        atr_value = df.at[idx, 'ATR']  # Use .at to get scalar
+        atr_value = df['ATR'].loc[idx]
         if pd.isna(atr_value):
-            continue  # skip if ATR is NaN
+            continue
         row = df.loc[idx]
         longCond  = row['Close'] > row['HighestHigh'] and row['RSI'] > 50 and row['Close'] > row['MA']
         shortCond = row['Close'] < row['LowestLow'] and row['RSI'] < 50 and row['Close'] < row['MA']
@@ -157,4 +165,5 @@ if st.button("Fetch Option Chain & Signals"):
         st.info("No signals generated due to insufficient data.")
     else:
         st.dataframe(signals)
+
 
