@@ -62,18 +62,15 @@ if uploaded_file is not None:
                         'Event','VolumeMultiple','FutureOIPercentChange']
         df = df[display_cols]
 
-        # Separate Nifty and BankNifty
+        # Separate NIFTY & BANKNIFTY
         nifty_banknifty = df[df['Instrument'].isin(['NIFTY','BANKNIFTY'])]
         others = df[~df['Instrument'].isin(['NIFTY','BANKNIFTY'])]
 
-        # Top 10 trades from remaining
+        # Top 10 trades
         top10 = others.sort_values(by='PotentialPoints', ascending=False).head(10)
-        rest = others.drop(top10.index)
+        all_others = others.sort_values(by='PotentialPoints', ascending=False)
 
-        # Final dataframe
-        final_df = pd.concat([nifty_banknifty, top10, rest], ignore_index=True)
-
-        # Styling
+        # Styling function
         def highlight_strategy(row):
             if 'CALL' in row['Strategy']:
                 color = 'background-color: #d4f8d4'
@@ -83,14 +80,22 @@ if uploaded_file is not None:
                 color = ''
             return [color]*len(row)
 
-        styled_df = final_df.style.apply(highlight_strategy, axis=1)\
-                                  .format("{:.2f}", subset=['Entry','Exit','PotentialPoints','FuturePrice','MaxPain',
-                                                             'PCR','FuturePercentChange','ATMIV','ATMIVChange','IVPercentile',
-                                                             'FutureOIPercentChange'])\
-                                  .set_properties(**{'text-align':'center'})\
-                                  .set_table_styles([{'selector':'th','props':[('text-align','center')]}])
+        def style_dataframe(df_to_style):
+            return df_to_style.style.apply(highlight_strategy, axis=1)\
+                                   .format("{:.2f}", subset=['Entry','Exit','PotentialPoints','FuturePrice','MaxPain',
+                                                              'PCR','FuturePercentChange','ATMIV','ATMIVChange','IVPercentile',
+                                                              'FutureOIPercentChange'])\
+                                   .set_properties(**{'text-align':'center'})\
+                                   .set_table_styles([{'selector':'th','props':[('text-align','center')]}])
 
-        st.dataframe(styled_df, use_container_width=True)
+        st.subheader("NIFTY & BANKNIFTY")
+        st.dataframe(style_dataframe(nifty_banknifty), use_container_width=True)
+
+        st.subheader("Top 10 Trades")
+        st.dataframe(style_dataframe(top10), use_container_width=True)
+
+        st.subheader("All Trades")
+        st.dataframe(style_dataframe(all_others), use_container_width=True)
 
     except Exception as e:
         st.error(f"Error processing file: {e}")
