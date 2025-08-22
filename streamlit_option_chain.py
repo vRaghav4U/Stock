@@ -1,4 +1,4 @@
-# streamlit_option_chain_robust.py
+# streamlit_option_chain_final.py
 
 import streamlit as st
 import pandas as pd
@@ -23,10 +23,13 @@ def compute_rsi(series, period=14):
 def compute_atr(df, period=14):
     if df.shape[0] < period + 1:
         return pd.Series([np.nan]*len(df), index=df.index)
+    
     high_low = df['High'] - df['Low']
     high_close = np.abs(df['High'] - df['Close'].shift())
     low_close = np.abs(df['Low'] - df['Close'].shift())
-    tr = high_low.combine(high_close, max).combine(low_close, max)
+    
+    # Safe calculation for single-row or small DataFrames
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     atr = tr.rolling(period).mean()
     return atr
 
