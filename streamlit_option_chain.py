@@ -1,4 +1,4 @@
-# streamlit_option_chain_reliable.py
+# streamlit_option_chain_robust.py
 
 import streamlit as st
 import pandas as pd
@@ -21,6 +21,8 @@ def compute_rsi(series, period=14):
     return rsi
 
 def compute_atr(df, period=14):
+    if df.shape[0] < period + 1:
+        return pd.Series([np.nan]*len(df), index=df.index)
     high_low = df['High'] - df['Low']
     high_close = np.abs(df['High'] - df['Close'].shift())
     low_close = np.abs(df['Low'] - df['Close'].shift())
@@ -80,8 +82,9 @@ def fetch_option_chain(symbol):
         return fetch_option_chain_yf(symbol)
 
 def fetch_option_chain_yf(symbol):
-    # Minimal fallback: just fetch last close price as “CE” and “PE”
     df = yf.download(symbol+".NS" if symbol.upper() not in ["NIFTY","BANKNIFTY"] else "^NSEI", period="5d")
+    if df.empty:
+        return pd.DataFrame()
     last_close = df['Close'].iloc[-1]
     data_list = [
         {'Type':'CE','Strike':last_close,'LTP':last_close,'OI':0,'Volume':0},
@@ -95,6 +98,10 @@ def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=
     except:
         return pd.DataFrame()
     
+    if df.empty or df.shape[0] < max(rsi_length, break_len, atr_len):
+        st.warning(f"Not enough data to calculate signals for {symbol}.")
+        return pd.DataFrame()
+    
     df['RSI'] = compute_rsi(df['Close'], rsi_length)
     df['HighestHigh'] = df['High'].rolling(break_len).max()
     df['LowestLow'] = df['Low'].rolling(break_len).min()
@@ -103,6 +110,8 @@ def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=
     
     signals = []
     for idx, row in df.iterrows():
+        if np.isnan(row['ATR']):
+            continue
         longCond  = row['Close'] > row['HighestHigh'] and row['RSI'] > 50 and row['Close'] > row['MA']
         shortCond = row['Close'] < row['LowestLow'] and row['RSI'] < 50 and row['Close'] < row['MA']
         longSL = row['Close'] - atr_mult * row['ATR']
@@ -112,15 +121,15 @@ def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=
             signals.append({'Datetime': idx, 'Symbol': symbol, 'Signal': 'CALL', 'StopLoss': longSL, 'Close': row['Close']})
         elif shortCond:
             signals.append({'Datetime': idx, 'Symbol': symbol, 'Signal': 'PUT', 'StopLoss': shortSL, 'Close': row['Close']})
+    
     return pd.DataFrame(signals)
 
 # =========================
 # Streamlit UI
 # =========================
 
-st.title("NSE Option Chain & Reliable Signals")
+st.title("NSE Option Chain & Robust Signals")
 
-# Dropdown for stocks
 optionable_stocks = get_optionable_stocks()
 optionable_stocks += ["NIFTY","BANKNIFTY"]
 
@@ -133,7 +142,13 @@ if st.button("Fetch Option Chain & Signals"):
         time.sleep(1)
     
     st.subheader("Option Chain")
-    st.dataframe(oc)
+    if oc.empty:
+        st.info("No option chain data available.")
+    else:
+        st.dataframe(oc)
     
     st.subheader("Generated Signals")
-    st.dataframe(signals)
+    if signals.empty:
+        st.info("No signals generated due to insufficient data.")
+    else:
+        st.dataframe(signals)
