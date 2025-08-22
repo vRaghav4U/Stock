@@ -96,43 +96,56 @@ def fetch_option_chain_yf(symbol):
     return pd.DataFrame(data_list)
 
 def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=1.5):
+    import pandas as pd
+    import numpy as np
+    import yfinance as yf
+    
     try:
         df = yf.download(symbol+".NS" if symbol.upper() not in ["NIFTY","BANKNIFTY"] else "^NSEI",
                          period="60d", interval="15m")
     except:
         return pd.DataFrame()
     
+    # Minimum rows required for rolling indicators
     min_rows_needed = max(rsi_length, break_len, atr_len, 50)
     if df.empty or df.shape[0] < min_rows_needed:
-        st.warning(f"Not enough data to calculate signals for {symbol}.")
-        return pd.DataFrame()  # Return empty
+        return pd.DataFrame()  # Return empty instead of crashing
     
     # Compute indicators
     df['RSI'] = compute_rsi(df['Close'], rsi_length)
-    df['HighestHigh'] = df['High'].rolling(break_len).max()
-    df['LowestLow'] = df['Low'].rolling(break_len).min()
-    df['MA'] = df['Close'].rolling(50).mean()
-    df['ATR'] = compute_atr(df, atr_len)
     
-    # Ensure all columns exist before dropping NaN
-    required_cols = ['RSI','HighestHigh','LowestLow','MA','ATR']
-    if not all(col in df.columns for col in required_cols):
-        st.info(f"Not enough rolling data for {symbol} to generate signals.")
-        return pd.DataFrame()
+    if df.shape[0] >= break_len:
+        df['HighestHigh'] = df['High'].rolling(break_len).max()
+        df['LowestLow'] = df['Low'].rolling(break_len).min()
+    else:
+        df['HighestHigh'] = np.nan
+        df['LowestLow'] = np.nan
+        
+    if df.shape[0] >= 50:
+        df['MA'] = df['Close'].rolling(50).mean()
+    else:
+        df['MA'] = np.nan
     
-    # Drop rows with NaNs
-    df = df.dropna(subset=required_cols)
+    if df.shape[0] >= atr_len:
+        df['ATR'] = compute_atr(df, atr_len)
+    else:
+        df['ATR'] = np.nan
+    
+    # Drop rows where any rolling indicator is NaN
+    df = df.dropna(subset=['RSI','HighestHigh','LowestLow','MA','ATR'])
+    
     if df.empty:
-        st.info(f"No signals can be generated for {symbol} due to insufficient rolling data.")
-        return pd.DataFrame()
+        return pd.DataFrame()  # Nothing to calculate
     
     # Generate signals
     df['Signal'] = ''
     df['StopLoss'] = np.nan
-    df.loc[(df['Close'] > df['HighestHigh']) & (df['RSI'] > 50) & (df['Close'] > df['MA']),
-           ['Signal','StopLoss']] = ['CALL', df['Close'] - atr_mult * df['ATR']]
-    df.loc[(df['Close'] < df['LowestLow']) & (df['RSI'] < 50) & (df['Close'] < df['MA']),
-           ['Signal','StopLoss']] = ['PUT', df['Close'] + atr_mult * df['ATR']]
+    
+    long_mask  = (df['Close'] > df['HighestHigh']) & (df['RSI'] > 50) & (df['Close'] > df['MA'])
+    short_mask = (df['Close'] < df['LowestLow']) & (df['RSI'] < 50) & (df['Close'] < df['MA'])
+    
+    df.loc[long_mask, ['Signal','StopLoss']]  = ['CALL', df['Close'] - atr_mult * df['ATR']]
+    df.loc[short_mask, ['Signal','StopLoss']] = ['PUT',  df['Close'] + atr_mult * df['ATR']]
     
     signals = df[df['Signal'] != ''][['Signal','StopLoss','Close']]
     signals.reset_index(inplace=True)
@@ -169,6 +182,7 @@ if st.button("Fetch Option Chain & Signals"):
         st.info("No signals generated due to insufficient data.")
     else:
         st.dataframe(signals)
+
 
 
 
