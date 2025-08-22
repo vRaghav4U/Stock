@@ -94,7 +94,6 @@ def fetch_option_chain_yf(symbol):
         {'Type':'PE','Strike':last_close,'LTP':last_close,'OI':0,'Volume':0}
     ]
     return pd.DataFrame(data_list)
-
 def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=1.5):
     try:
         df = yf.download(symbol+".NS" if symbol.upper() not in ["NIFTY","BANKNIFTY"] else "^NSEI", period="60d", interval="15m")
@@ -112,13 +111,15 @@ def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=
     df['ATR'] = compute_atr(df, atr_len)
     
     signals = []
-    for idx, row in df.iterrows():
-        if np.isnan(row['ATR']):
-            continue
+    for idx in df.index:
+        atr_value = df.at[idx, 'ATR']  # Use .at to get scalar
+        if pd.isna(atr_value):
+            continue  # skip if ATR is NaN
+        row = df.loc[idx]
         longCond  = row['Close'] > row['HighestHigh'] and row['RSI'] > 50 and row['Close'] > row['MA']
         shortCond = row['Close'] < row['LowestLow'] and row['RSI'] < 50 and row['Close'] < row['MA']
-        longSL = row['Close'] - atr_mult * row['ATR']
-        shortSL = row['Close'] + atr_mult * row['ATR']
+        longSL = row['Close'] - atr_mult * atr_value
+        shortSL = row['Close'] + atr_mult * atr_value
         
         if longCond:
             signals.append({'Datetime': idx, 'Symbol': symbol, 'Signal': 'CALL', 'StopLoss': longSL, 'Close': row['Close']})
@@ -126,6 +127,7 @@ def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=
             signals.append({'Datetime': idx, 'Symbol': symbol, 'Signal': 'PUT', 'StopLoss': shortSL, 'Close': row['Close']})
     
     return pd.DataFrame(signals)
+
 
 # =========================
 # Streamlit UI
@@ -155,3 +157,4 @@ if st.button("Fetch Option Chain & Signals"):
         st.info("No signals generated due to insufficient data.")
     else:
         st.dataframe(signals)
+
