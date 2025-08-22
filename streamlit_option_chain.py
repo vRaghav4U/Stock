@@ -95,47 +95,55 @@ def fetch_option_chain_yf(symbol):
     ]
     return pd.DataFrame(data_list)
 
+
 def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=1.5):
     import pandas as pd
     import numpy as np
     import yfinance as yf
-    
+
     try:
         df = yf.download(symbol+".NS" if symbol.upper() not in ["NIFTY","BANKNIFTY"] else "^NSEI",
                          period="60d", interval="15m")
     except:
         return pd.DataFrame()
     
-    # Minimum rows required for rolling indicators
+    # Minimum rows needed for rolling indicators
     min_rows_needed = max(rsi_length, break_len, atr_len, 50)
     if df.empty or df.shape[0] < min_rows_needed:
-        return pd.DataFrame()  # Return empty instead of crashing
+        return pd.DataFrame()  # Not enough data
     
-    # Compute indicators
+    # Compute RSI
     df['RSI'] = compute_rsi(df['Close'], rsi_length)
     
+    # Compute HighestHigh / LowestLow only if enough rows
     if df.shape[0] >= break_len:
         df['HighestHigh'] = df['High'].rolling(break_len).max()
         df['LowestLow'] = df['Low'].rolling(break_len).min()
     else:
         df['HighestHigh'] = np.nan
         df['LowestLow'] = np.nan
-        
+    
+    # Compute MA only if enough rows
     if df.shape[0] >= 50:
         df['MA'] = df['Close'].rolling(50).mean()
     else:
         df['MA'] = np.nan
     
+    # Compute ATR only if enough rows
     if df.shape[0] >= atr_len:
         df['ATR'] = compute_atr(df, atr_len)
     else:
         df['ATR'] = np.nan
     
-    # Drop rows where any rolling indicator is NaN
-    df = df.dropna(subset=['RSI','HighestHigh','LowestLow','MA','ATR'])
+    # Only keep columns that exist
+    cols_to_check = [c for c in ['RSI','HighestHigh','LowestLow','MA','ATR'] if c in df.columns]
+    if len(cols_to_check) < 5:
+        return pd.DataFrame()  # Not enough data to generate signals
     
+    # Drop NaN rows
+    df = df.dropna(subset=cols_to_check)
     if df.empty:
-        return pd.DataFrame()  # Nothing to calculate
+        return pd.DataFrame()
     
     # Generate signals
     df['Signal'] = ''
@@ -182,6 +190,7 @@ if st.button("Fetch Option Chain & Signals"):
         st.info("No signals generated due to insufficient data.")
     else:
         st.dataframe(signals)
+
 
 
 
