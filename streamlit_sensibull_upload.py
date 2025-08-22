@@ -1,133 +1,111 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 
-st.set_page_config(page_title="Sensibull Option Strategy Screener by Ketan", layout="wide")
+st.set_page_config(layout="wide")
 st.title("Sensibull Options Strategy Screener")
 st.markdown("[Sensibull Options Screener](https://web.sensibull.com/options-screener?view=table)  \nby Ketan", unsafe_allow_html=True)
 
 uploaded_file = st.file_uploader("Upload Sensibull CSV", type=["csv"])
+
 if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
+        df.columns = [c.strip() for c in df.columns]
 
-        # Ensure numeric columns
-        num_cols = ['FuturePrice','MaxPain','PCR','FuturePercentChange','ATMIV','ATMIVChange',
-                    'IVPercentile','VolumeMultiple','FutureOIPercentChange']
+        # Convert necessary columns to numeric
+        num_cols = ['FuturePrice','FuturePercentChange','ATMIV','ATMIVChange','IVPercentile','FutureOIPercentChange','PCR','MaxPain']
         for col in num_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        # Generate strategy, entry, exit, stoploss, potential points
-        strategies = []
-        entry = []
-        exit_ = []
-        stoploss = []
-        potential_points = []
-        trade_details = []
-        comments = []
-
-        for idx, row in df.iterrows():
-            fp = row['FuturePrice']
-            mp = row['MaxPain']
+        # Function to determine strategy
+        def determine_strategy(row):
+            fut = row['FuturePrice']
+            maxpain = row['MaxPain']
             pcr = row['PCR']
-            iv = row['ATMIV']
+            atmiv = row['ATMIV']
 
-            strat = ""
-            ent = 0
-            ex = 0
-            sl = 0
-            pp = 0
-            td = ""
-            cmnt = ""
+            # Defaults
+            strategy = "N/A"
+            entry = fut
+            exit_ = maxpain
+            stop_loss = None
+            potential = abs(fut - maxpain)
+            trade_detail = ""
+            comments = ""
 
-            if row['Instrument'] in ['NIFTY','BANKNIFTY']:
-                if fp < mp:
-                    strat = "CALL / Bull Call Spread"
-                    ent = fp
-                    ex = mp
-                    sl = fp - 0.5*(ex-ent)
-                    pp = ex - ent
-                    td = f"Buy Call at {ent:.2f}"
-                    cmnt = f"Bullish bias: PCR low, Max Pain above Fut Price"
-                else:
-                    strat = "PUT / Bear Call Spread"
-                    ent = fp
-                    ex = mp
-                    sl = ent + 0.5*(ent-ex)
-                    pp = ent - ex
-                    td = f"Buy Put at {ent:.2f}"
-                    cmnt = f"Bearish bias: PCR high, Max Pain below Fut Price"
+            if pd.isna(fut) or pd.isna(maxpain) or pd.isna(pcr):
+                return pd.Series([strategy, entry, exit_, stop_loss, comments, potential, trade_detail])
+
+            # Bullish strategies
+            if fut < maxpain and pcr < 0.8:
+                strategy = "CALL / Bull Call Spread"
+                trade_detail = f"Buy CE at {fut:.2f}, Sell CE at {maxpain:.2f}"
+                comments = "Bullish bias: PCR low, Max Pain above Fut Price"
+                stop_loss = fut - 0.5 * potential
+
+            elif fut < maxpain and 0.8 <= pcr <= 1.2:
+                strategy = "PUT / Bull Put Spread"
+                trade_detail = f"Sell PE at {fut:.2f}, Buy PE at {maxpain:.2f}"
+                comments = "Moderately bullish: PCR moderate, Max Pain above Fut Price"
+                stop_loss = fut - 0.5 * potential
+
+            # Bearish strategies
+            elif fut > maxpain and pcr > 1.2:
+                strategy = "PUT / Bear Call Spread"
+                trade_detail = f"Buy PE at {fut:.2f}, Sell PE at {maxpain:.2f}"
+                comments = "Bearish bias: PCR high, Max Pain below Fut Price"
+                stop_loss = fut + 0.5 * potential
+
+            elif fut > maxpain and 0.8 <= pcr <= 1.2:
+                strategy = "CALL / Bear Put Spread"
+                trade_detail = f"Buy CE at {fut:.2f}, Sell CE at {maxpain:.2f}"
+                comments = "Moderately bearish: PCR moderate, Max Pain below Fut Price"
+                stop_loss = fut + 0.5 * potential
+
+            # Neutral / volatility strategies
+            elif abs(fut - maxpain)/fut < 0.02 and atmiv > 20:
+                strategy = "Straddle / Strangle"
+                trade_detail = f"Buy CE & PE at {fut:.2f}"
+                comments = "Expect big move, directional neutral"
+                stop_loss = None
+
             else:
-                # Simple rules for top trades
-                if fp < mp:
-                    strat = "CALL / Bull Call Spread"
-                    ent = fp
-                    ex = mp
-                    sl = fp - 0.5*(ex-ent)
-                    pp = ex - ent
-                    td = f"Buy Call at {ent:.2f}"
-                    cmnt = "Bullish bias"
-                else:
-                    strat = "PUT / Bear Call Spread"
-                    ent = fp
-                    ex = mp
-                    sl = ent + 0.5*(ent-ex)
-                    pp = ent - ex
-                    td = f"Buy Put at {ent:.2f}"
-                    cmnt = "Bearish bias"
+                strategy = "Iron Condor"
+                trade_detail = f"Sell OTM CE & PE, Buy farther OTM CE & PE"
+                comments = "Neutral strategy, low IV"
+                stop_loss = None
 
-            strategies.append(strat)
-            entry.append(ent)
-            exit_.append(ex)
-            stoploss.append(sl)
-            potential_points.append(pp)
-            trade_details.append(td)
-            comments.append(cmnt)
+            return pd.Series([strategy, entry, exit_, stop_loss, comments, potential, trade_detail])
 
-        df['Strategy'] = strategies
-        df['Entry'] = entry
-        df['Exit'] = exit_
-        df['StopLoss'] = stoploss
-        df['PotentialPoints'] = potential_points
-        df['TradeDetails'] = trade_details
-        df['Comments'] = comments
+        df[['Strategy','Entry','Exit','StopLoss','Comments','PotentialPoints','TradeDetails']] = df.apply(determine_strategy, axis=1)
 
-        # Separate NIFTY and BANKNIFTY
-        nifty_df = df[df['Instrument'].isin(['NIFTY','BANKNIFTY'])]
-        top10_df = df.drop(df.index[df['Instrument'].isin(['NIFTY','BANKNIFTY'])]).sort_values(by='PotentialPoints', ascending=False).head(10)
-        all_df = df.copy()
+        # Order NIFTY and BANKNIFTY on top
+        nifty_rows = df[df['Instrument'].isin(['NIFTY','BANKNIFTY'])]
+        other_rows = df[~df['Instrument'].isin(['NIFTY','BANKNIFTY'])]
+        top10_rows = other_rows.sort_values('PotentialPoints', ascending=False).head(10)
+        all_trades = pd.concat([other_rows]).sort_values('PotentialPoints', ascending=False)
 
-        # Function for colour coding
-        def style_rows(row):
-            color = ''
-            if 'CALL' in row['Strategy']:
-                color = 'background-color: #d4edda'  # green
-            elif 'PUT' in row['Strategy']:
-                color = 'background-color: #f8d7da'  # red
+        def highlight_strategy(row):
+            if 'Bull' in row['Strategy']:
+                return ['background-color: #c6f5c6']*len(row)
+            elif 'Bear' in row['Strategy']:
+                return ['background-color: #f5c6c6']*len(row)
             else:
-                color = ''
-            return [color]*len(row)
+                return ['background-color: #c6d9f5']*len(row)
 
-        # Display tables
-        st.subheader("NIFTY and BANKNIFTY")
-        st.dataframe(
-            nifty_df.style.apply(style_rows, axis=1)
-            .format({col: "{:.2f}" for col in ['Entry','Exit','StopLoss','PotentialPoints','FuturePrice','MaxPain','PCR']}),
-            use_container_width=True
-        )
+        # Columns sequence
+        columns_seq = ['Instrument','Strategy','Entry','Exit','StopLoss','Comments','PotentialPoints','TradeDetails',
+                       'FuturePrice','MaxPain','PCR','FuturePercentChange','ATMIV','ATMIVChange','IVPercentile','Event','VolumeMultiple','FutureOIPercentChange']
+
+        st.subheader("NIFTY / BANKNIFTY")
+        st.dataframe(nifty_rows[columns_seq].style.apply(highlight_strategy, axis=1).format(precision=2), use_container_width=True)
 
         st.subheader("Top 10 Trades")
-        st.dataframe(
-            top10_df.style.apply(style_rows, axis=1)
-            .format({col: "{:.2f}" for col in ['Entry','Exit','StopLoss','PotentialPoints','FuturePrice','MaxPain','PCR']}),
-            use_container_width=True
-        )
+        st.dataframe(top10_rows[columns_seq].style.apply(highlight_strategy, axis=1).format(precision=2), use_container_width=True)
 
         st.subheader("All Trades")
-        st.dataframe(
-            all_df.style.apply(style_rows, axis=1)
-            .format({col: "{:.2f}" for col in ['Entry','Exit','StopLoss','PotentialPoints','FuturePrice','MaxPain','PCR']}),
-            use_container_width=True
-        )
+        st.dataframe(all_trades[columns_seq].style.apply(highlight_strategy, axis=1).format(precision=2), use_container_width=True)
 
     except Exception as e:
         st.error(f"Error processing file: {e}")
