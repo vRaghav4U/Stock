@@ -1,135 +1,55 @@
-# streamlit_option_chain_final.py
-
-import streamlit as st
 import pandas as pd
-import requests
-import yfinance as yf
 import numpy as np
-import time
+import yfinance as yf
 
-# =========================
-# Helper functions
-# =========================
-
-def compute_rsi(series, period=14):
+def compute_rsi(series, length=14):
     delta = series.diff()
-    up = delta.clip(lower=0)
-    down = -1*delta.clip(upper=0)
-    ma_up = up.rolling(period).mean()
-    ma_down = down.rolling(period).mean()
-    rsi = 100 - (100/(1 + ma_up/ma_down))
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.rolling(length, min_periods=1).mean()
+    avg_loss = loss.rolling(length, min_periods=1).mean()
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
     return rsi
 
-def compute_atr(df, period=14):
-    if df.shape[0] < period + 1:
-        return pd.Series([np.nan]*len(df), index=df.index)
-    
+def compute_atr(df, length=14):
     high_low = df['High'] - df['Low']
-    high_close = np.abs(df['High'] - df['Close'].shift())
-    low_close = np.abs(df['Low'] - df['Close'].shift())
-    
-    # Safe calculation for single-row or small DataFrames
+    high_close = (df['High'] - df['Close'].shift()).abs()
+    low_close = (df['Low'] - df['Close'].shift()).abs()
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    atr = tr.rolling(period).mean()
+    atr = tr.rolling(length, min_periods=1).mean()
     return atr
 
-def get_optionable_stocks():
-    headers = {"User-Agent": "Mozilla/5.0"}
-    session = requests.Session()
-    try:
-        session.get("https://www.nseindia.com", headers=headers)
-        url_eq = "https://www.nseindia.com/api/live-equity-derivatives?index=optstock"
-        response = session.get(url_eq, headers=headers).json()
-        stocks = [x['symbol'] for x in response['data']]
-    except:
-        stocks = []
-    return stocks
-
-def fetch_option_chain(symbol):
-    headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Referer": "https://www.nseindia.com"
-    }
-    session = requests.Session()
-    try:
-        session.get("https://www.nseindia.com", headers=headers)
-        url = f"https://www.nseindia.com/api/option-chain-equities?symbol={symbol}" if symbol.upper() not in ["NIFTY","BANKNIFTY"] else f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol}"
-        
-        for _ in range(3):
-            try:
-                response = session.get(url, headers=headers, timeout=5)
-                data = response.json()
-                break
-            except:
-                time.sleep(2)
-        else:
-            st.warning(f"NSE blocked requests for {symbol}, falling back to Yahoo Finance.")
-            return fetch_option_chain_yf(symbol)
-        
-        data_list = []
-        records = data['records']['data']
-        for rec in records:
-            ce = rec.get('CE')
-            pe = rec.get('PE')
-            strikePrice = rec['strikePrice']
-            if ce:
-                data_list.append({'Type':'CE','Strike':strikePrice,'LTP':ce['lastPrice'],'OI':ce['openInterest'],'Volume':ce['totalTradedVolume']})
-            if pe:
-                data_list.append({'Type':'PE','Strike':strikePrice,'LTP':pe['lastPrice'],'OI':pe['openInterest'],'Volume':pe['totalTradedVolume']})
-        return pd.DataFrame(data_list)
-    
-    except Exception as e:
-        st.warning(f"Failed to fetch from NSE: {e}. Using Yahoo Finance fallback.")
-        return fetch_option_chain_yf(symbol)
-
-def fetch_option_chain_yf(symbol):
-    df = yf.download(symbol+".NS" if symbol.upper() not in ["NIFTY","BANKNIFTY"] else "^NSEI", period="5d")
-    if df.empty:
-        return pd.DataFrame()
-    last_close = df['Close'].iloc[-1]
-    data_list = [
-        {'Type':'CE','Strike':last_close,'LTP':last_close,'OI':0,'Volume':0},
-        {'Type':'PE','Strike':last_close,'LTP':last_close,'OI':0,'Volume':0}
-    ]
-    return pd.DataFrame(data_list)
-
-
 def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=1.5):
-    import pandas as pd
-    import numpy as np
-    import yfinance as yf
-
+    # Download data (Yahoo fallback for NIFTY/BANKNIFTY)
     try:
-        df = yf.download(symbol+".NS" if symbol.upper() not in ["NIFTY","BANKNIFTY"] else "^NSEI",
-                         period="60d", interval="15m")
+        ticker = symbol+".NS" if symbol.upper() not in ["NIFTY","BANKNIFTY"] else "^NSEI"
+        df = yf.download(ticker, period="60d", interval="15m")
     except:
         return pd.DataFrame()
     
-    # Minimum rows needed for rolling indicators
+    # Ensure we have enough rows
     min_rows_needed = max(rsi_length, break_len, atr_len, 50)
     if df.empty or df.shape[0] < min_rows_needed:
-        return pd.DataFrame()  # Not enough data
+        return pd.DataFrame()
     
-    # Compute RSI
+    # Compute indicators
     df['RSI'] = compute_rsi(df['Close'], rsi_length)
+    df['HighestHigh'] = df['High'].rolling(break_len, min_periods=1).max()
+    df['LowestLow'] = df['Low'].rolling(break_len, min_periods=1).min()
+    df['MA'] = df['Close'].rolling(50, min_periods=1).mean()
+    df['ATR'] = compute_atr(df, atr_len)
     
-    # Compute rolling indicators only if enough rows
-    df['HighestHigh'] = df['High'].rolling(break_len).max() if df.shape[0] >= break_len else np.nan
-    df['LowestLow'] = df['Low'].rolling(break_len).min() if df.shape[0] >= break_len else np.nan
-    df['MA'] = df['Close'].rolling(50).mean() if df.shape[0] >= 50 else np.nan
-    df['ATR'] = compute_atr(df, atr_len) if df.shape[0] >= atr_len else np.nan
-    
-    # Filter rows where all necessary columns are numeric
-    required_cols = ['RSI','HighestHigh','LowestLow','MA','ATR']
-    for col in required_cols:
+    # Convert all necessary columns to numeric
+    for col in ['Close','HighestHigh','LowestLow','MA','RSI','ATR']:
         if col not in df.columns:
-            return pd.DataFrame()  # Skip if column missing
-        df = df[df[col].notna()]
+            return pd.DataFrame()
+        df[col] = pd.to_numeric(df[col], errors='coerce')
     
+    # Filter out rows with any NaNs
+    df = df.dropna(subset=['Close','HighestHigh','LowestLow','MA','RSI','ATR'])
     if df.empty:
-        return pd.DataFrame()  # Nothing to calculate
+        return pd.DataFrame()
     
     # Generate signals
     df['Signal'] = ''
@@ -141,46 +61,9 @@ def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=
     df.loc[long_mask, ['Signal','StopLoss']]  = ['CALL', df['Close'] - atr_mult * df['ATR']]
     df.loc[short_mask, ['Signal','StopLoss']] = ['PUT',  df['Close'] + atr_mult * df['ATR']]
     
+    # Return only the rows with signals
     signals = df[df['Signal'] != ''][['Signal','StopLoss','Close']]
     signals.reset_index(inplace=True)
     signals.rename(columns={'index':'Datetime','Close':'Price'}, inplace=True)
     
     return signals
-
-
-# =========================
-# Streamlit UI
-# =========================
-
-st.title("NSE Option Chain & Robust Signals")
-
-optionable_stocks = get_optionable_stocks()
-optionable_stocks += ["NIFTY","BANKNIFTY"]
-
-symbol = st.selectbox("Select Symbol", optionable_stocks)
-
-if st.button("Fetch Option Chain & Signals"):
-    with st.spinner("Fetching data..."):
-        oc = fetch_option_chain(symbol)
-        signals = calculate_signals(symbol)
-        time.sleep(1)
-    
-    st.subheader("Option Chain")
-    if oc.empty:
-        st.info("No option chain data available.")
-    else:
-        st.dataframe(oc)
-    
-    st.subheader("Generated Signals")
-    if signals.empty:
-        st.info("No signals generated due to insufficient data.")
-    else:
-        st.dataframe(signals)
-
-
-
-
-
-
-
-
