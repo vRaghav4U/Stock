@@ -51,6 +51,12 @@ if uploaded_file:
         # Apply strategy function
         df[['Strategy','Entry','Exit','Comments','PotentialPoints','TradeDetails']] = df.apply(determine_strategy, axis=1)
 
+        # Reorder columns
+        cols_sequence = ['Instrument','Strategy','Entry','Exit','Comments','PotentialPoints','TradeDetails',
+                         'FuturePrice','MaxPain','PCR','FuturePercentChange','ATMIV','ATMIVChange',
+                         'IVPercentile','Event','VolumeMultiple','FutureOIPercentChange']
+        df = df[[col for col in cols_sequence if col in df.columns]]
+
         # Styling
         def highlight_strategy(row):
             if "Bull" in row['Strategy']:
@@ -60,7 +66,13 @@ if uploaded_file:
             else:
                 return ['']*len(row)
 
+        st.subheader("All Strategies")
         st.dataframe(df.style.apply(highlight_strategy, axis=1).set_table_attributes('style="width:100%"'))
+
+        # Top 10 trades by PotentialPoints
+        top_trades = df.sort_values(by='PotentialPoints', ascending=False).head(10)
+        st.subheader("Top 10 Trades by Potential Points")
+        st.dataframe(top_trades.style.apply(highlight_strategy, axis=1).set_table_attributes('style="width:100%"'))
 
     except Exception as e:
         st.error(f"Error processing file: {e}")
