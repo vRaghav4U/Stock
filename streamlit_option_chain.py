@@ -10,6 +10,10 @@ st.set_page_config(page_title="Option Trade Signals", layout="wide")
 # =========================
 # Indicator Functions
 # =========================
+import pandas as pd
+import numpy as np
+import yfinance as yf
+
 def compute_rsi(series, length=14):
     delta = series.diff()
     gain = delta.clip(lower=0)
@@ -27,14 +31,13 @@ def compute_atr(df, length=14):
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     atr = tr.rolling(length, min_periods=1).mean()
     return atr
-# =========================
-# Main Signal Calculation
-# =========================
+
 def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=1.5):
     # ----------------------
     # Download data
     # ----------------------
     try:
+        # Use Yahoo ticker for indices
         ticker = symbol + ".NS" if symbol.upper() not in ["NIFTY", "BANKNIFTY"] else "^NSEI"
         df = yf.download(ticker, period="60d", interval="15m")
     except Exception as e:
@@ -80,8 +83,12 @@ def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=
     long_mask  = (df['Close'] > df['HighestHigh']) & (df['RSI'] > 50) & (df['Close'] > df['MA'])
     short_mask = (df['Close'] < df['LowestLow']) & (df['RSI'] < 50) & (df['Close'] < df['MA'])
 
-    df.loc[long_mask, ['Signal','StopLoss']]  = ['CALL', df['Close'] - atr_mult * df['ATR']]
-    df.loc[short_mask, ['Signal','StopLoss']] = ['PUT',  df['Close'] + atr_mult * df['ATR']]
+    # Assign separately to avoid ValueError
+    df.loc[long_mask, 'Signal'] = 'CALL'
+    df.loc[long_mask, 'StopLoss'] = df.loc[long_mask, 'Close'] - atr_mult * df.loc[long_mask, 'ATR']
+
+    df.loc[short_mask, 'Signal'] = 'PUT'
+    df.loc[short_mask, 'StopLoss'] = df.loc[short_mask, 'Close'] + atr_mult * df.loc[short_mask, 'ATR']
 
     # ----------------------
     # Return only rows with signals
@@ -91,6 +98,7 @@ def calculate_signals(symbol, rsi_length=14, break_len=20, atr_len=14, atr_mult=
     signals.rename(columns={'index':'Datetime','Close':'Price'}, inplace=True)
 
     return signals
+
 
 # =========================
 # Streamlit UI
@@ -119,6 +127,7 @@ if st.button("Generate Signals"):
         
         st.subheader(f"Signals for {symbol.upper()}")
         st.dataframe(signals.style.apply(color_row, axis=1))
+
 
 
 
