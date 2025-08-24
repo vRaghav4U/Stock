@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 
 # ---------- App chrome ----------
-st.set_page_config(page_title="Sensibull Options Strategy Screener", layout="wide")
+st.set_page_config(page_title="Ketan Verma- Options Strategy Screener", layout="wide")
 
 st.markdown("<h1 style='text-align:center;'>Options Strategy Screener</h1>", unsafe_allow_html=True)
 st.markdown("<h4 style='text-align:center;'>by Ketan</h4>", unsafe_allow_html=True)
@@ -261,4 +261,5 @@ if uploaded_file:
 
     except Exception as e:
         st.error(f"Error processing file: {e}")
+
 
