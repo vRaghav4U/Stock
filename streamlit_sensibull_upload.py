@@ -88,7 +88,7 @@ def add_strategy(rows, instrument, cat, name, entry, exit_price, sl, potential, 
     })
 
 def generate_strategies(row):
-    """Return a list of dicts (one per strategy) for a single instrument."""
+    """Return the single best strategy for an instrument."""
     i = row['Instrument']
     fut = row['FuturePrice']
     maxpain = row['MaxPain']
@@ -105,145 +105,42 @@ def generate_strategies(row):
     tgt, long_sl, short_sl, potential = directional_levels(fut, maxpain)
     n_lo, n_hi, half_w = neutral_range(fut, maxpain, ivp if np.isfinite(ivp) else 50.0)
 
-    # ----------------------- Directional (Bullish) -----------------------
-    if bias == "BULLISH":
-        # Long Call (debit) - best when IV LOW/MED
-        if iv_regime in ("LOW", "MEDIUM"):
-            rr = safe_rr(potential, abs(fut - long_sl))
-            add_strategy(
-                rows, i, "CALL",
-                "Long Call",
-                entry=fut, exit_price=tgt, sl=long_sl, potential=potential, rr=rr,
-                details=f"Buy ATM CE ~{fut:.2f}",
-                comments="Bullish bias (PCR/MaxPain). Debit favored when IV not high."
-            )
-        # Bull Call Spread (debit)
-        if iv_regime in ("LOW", "MEDIUM"):
-            spread_potential = potential * 0.6  # conservative cap for verticals
-            rr = safe_rr(spread_potential, 0.5 * abs(fut - long_sl))
-            add_strategy(
-                rows, i, "CALL",
-                "Bull Call Spread",
-                entry=fut, exit_price=tgt, sl=long_sl, potential=spread_potential, rr=rr,
-                details=f"Buy ATM CE, Sell OTM CE (~{tgt:.2f})",
-                comments="Debit vertical caps risk; useful when IV not elevated."
-            )
-        # Bull Put Spread (credit) - best when IV HIGH
-        if iv_regime == "HIGH":
-            credit_potential = potential * 0.4  # credit spreads earn smaller but safer
-            rr = safe_rr(credit_potential, 0.5 * abs(fut - long_sl))
-            add_strategy(
-                rows, i, "PUT",
-                "Bull Put Spread (Credit)",
-                entry=fut, exit_price=n_hi, sl=n_lo, potential=credit_potential, rr=rr,
-                details=f"Sell OTM PE, Buy lower PE; hold if > {n_lo:.2f}.",
-                comments="Bullish + high IV → sell puts for premium."
-            )
-
-    # ----------------------- Directional (Bearish) -----------------------
-    if bias == "BEARISH":
-        # Long Put (debit)
-        if iv_regime in ("LOW", "MEDIUM"):
-            rr = safe_rr(potential, abs(short_sl - fut))
-            add_strategy(
-                rows, i, "PUT",
-                "Long Put",
-                entry=fut, exit_price=tgt, sl=short_sl, potential=potential, rr=rr,
-                details=f"Buy ATM PE ~{fut:.2f}",
-                comments="Bearish bias (PCR/MaxPain). Debit favored when IV not high."
-            )
-        # Bear Put Spread (debit)
-        if iv_regime in ("LOW", "MEDIUM"):
-            spread_potential = potential * 0.6
-            rr = safe_rr(spread_potential, 0.5 * abs(short_sl - fut))
-            add_strategy(
-                rows, i, "PUT",
-                "Bear Put Spread",
-                entry=fut, exit_price=tgt, sl=short_sl, potential=spread_potential, rr=rr,
-                details=f"Buy ATM PE, Sell lower PE (~{tgt:.2f})",
-                comments="Debit vertical improves RR; works with moderate IV."
-            )
-        # Bear Call Spread (credit)
-        if iv_regime == "HIGH":
-            credit_potential = potential * 0.4
-            rr = safe_rr(credit_potential, 0.5 * abs(short_sl - fut))
-            add_strategy(
-                rows, i, "CALL",
-                "Bear Call Spread (Credit)",
-                entry=fut, exit_price=n_lo, sl=n_hi, potential=credit_potential, rr=rr,
-                details=f"Sell OTM CE, Buy higher CE; hold if < {n_hi:.2f}.",
-                comments="Bearish + high IV → sell calls for premium."
-            )
-
-    # ----------------------- Neutral / Volatility -----------------------
-    # If fut is close to max pain (within 0.4%-0.8%), consider neutral setups
-    close_to_mp = (abs(maxpain - fut) <= 0.008 * fut)
-
-    # Long Straddle/Strangle: when IV LOW and expecting move away from MP
-    if iv_regime == "LOW":
-        lv_pot = max(potential, fut * 0.005)  # modest move proxy
-        rr = safe_rr(lv_pot, 0.5 * lv_pot)
-        add_strategy(
-            rows, i, "LONGVOL",
-            "Long Straddle",
-            entry=fut, exit_price=tgt, sl=np.nan, potential=lv_pot, rr=rr,
-            details="Buy ATM CE + ATM PE",
-            comments="Low IV → buy vol; profit from move/expansion."
-        )
-        add_strategy(
-            rows, i, "LONGVOL",
-            "Long Strangle",
-            entry=fut, exit_price=tgt, sl=np.nan, potential=lv_pot*0.9, rr=rr,
-            details="Buy OTM CE + OTM PE",
-            comments="Cheaper than straddle; needs larger move."
-        )
-
-    # Short Straddle/Strangle & Iron structures: when IV HIGH (sell premium)
-    if iv_regime == "HIGH":
-        # Short Straddle
-        credit = half_w * 2.0
-        rr = safe_rr(credit, half_w)  # risk proxy using break-even half-width
-        add_strategy(
-            rows, i, "SHORTVOL",
-            "Short Straddle (ATM)",
-            entry=fut, exit_price=fut, sl=fut + 2*half_w, potential=credit, rr=rr,
-            details=f"Sell ATM CE + ATM PE; manage ±{2*half_w:.2f}",
-            comments="High IV → mean reversion & theta; manage risk actively."
-        )
-        # Short Strangle
-        credit = half_w * 1.6
-        rr = safe_rr(credit, half_w)
-        add_strategy(
-            rows, i, "SHORTVOL",
-            "Short Strangle (OTM)",
-            entry=fut, exit_price=fut, sl=fut + 2.5*half_w, potential=credit, rr=rr,
-            details=f"Sell OTM CE + OTM PE; cushion up to ~±{2.5*half_w:.2f}",
-            comments="Higher safety than straddle; less credit."
-        )
-        # Iron Condor (when neutral & near MP helps)
-        if close_to_mp:
-            credit = half_w * 1.2
-            rr = safe_rr(credit, half_w)
-            add_strategy(
-                rows, i, "NEUTRAL",
-                "Iron Condor",
-                entry=fut, exit_price=fut, sl=fut + 3*half_w, potential=credit, rr=rr,
-                details="Sell OTM CE & PE; buy far OTM wings.",
-                comments="High IV + near Max Pain → premium capture."
-            )
-        # Iron Butterfly (ATM short body)
-        if close_to_mp:
-            credit = half_w * 1.4
-            rr = safe_rr(credit, half_w)
-            add_strategy(
-                rows, i, "NEUTRAL",
-                "Iron Butterfly",
-                entry=fut, exit_price=fut, sl=fut + 2.5*half_w, potential=credit, rr=rr,
-                details="Short ATM straddle + buy far OTM wings.",
-                comments="High IV + price pinned near MP → best payoff."
-            )
-
+    # Decide best-fit strategy
+    if iv_regime in ("LOW", "MEDIUM"):
+        if bias == "BULLISH":
+            add_strategy(rows, i, "CALL", "Bull Call Spread", fut, tgt, long_sl,
+                         potential*0.6, safe_rr(potential*0.6, 0.5*abs(fut-long_sl)),
+                         f"Buy ATM CE ~{fut:.0f}, Sell OTM CE ~{tgt:.0f}",
+                         "Low IV + bullish bias → debit spread.")
+        elif bias == "BEARISH":
+            add_strategy(rows, i, "PUT", "Bear Put Spread", fut, tgt, short_sl,
+                         potential*0.6, safe_rr(potential*0.6, 0.5*abs(short_sl-fut)),
+                         f"Buy ATM PE ~{fut:.0f}, Sell OTM PE ~{tgt:.0f}",
+                         "Low IV + bearish bias → debit spread.")
+        else:  # Neutral
+            add_strategy(rows, i, "LONGVOL", "Long Straddle", fut, tgt, np.nan,
+                         max(potential, fut*0.005),
+                         safe_rr(potential, 0.5*potential),
+                         "Buy ATM CE + ATM PE",
+                         "Low IV + neutral bias → buy vol for breakout.")
+    elif iv_regime == "HIGH":
+        if bias == "BULLISH":
+            add_strategy(rows, i, "PUT", "Bull Put Spread (Credit)", fut, n_hi, n_lo,
+                         potential*0.4, safe_rr(potential*0.4, half_w),
+                         f"Sell OTM PE ~{n_lo:.0f}, Buy lower PE",
+                         "High IV + bullish bias → sell puts for premium.")
+        elif bias == "BEARISH":
+            add_strategy(rows, i, "CALL", "Bear Call Spread (Credit)", fut, n_lo, n_hi,
+                         potential*0.4, safe_rr(potential*0.4, half_w),
+                         f"Sell OTM CE ~{n_hi:.0f}, Buy higher CE",
+                         "High IV + bearish bias → sell calls for premium.")
+        else:  # Neutral
+            add_strategy(rows, i, "NEUTRAL", "Iron Condor", fut, fut, fut,
+                         potential*0.3, safe_rr(potential*0.3, half_w),
+                         "Sell OTM CE & PE, hedge with wings",
+                         "High IV + near MaxPain → condor best.")
     return rows
+
 
 # ---------- Styling ----------
 def highlight_row(row):
@@ -364,3 +261,4 @@ if uploaded_file:
 
     except Exception as e:
         st.error(f"Error processing file: {e}")
+
